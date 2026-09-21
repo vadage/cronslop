@@ -86,7 +86,20 @@ different number. `tests/snapshot.rs` is the net under them: it pins the
 exact result of 163 expressions, errors included, so a silent change in
 behavior fails the build.
 
+## Provenance
+
+cronslop was written end-to-end by [Claude Code](https://claude.com/claude-code)
+— the original implementation and the subsequent rewrite alike. No line of it
+was typed by a human.
+
+That is a reason to check the tests rather than to trust the label, so they
+are the point: 32 of them, including a panic-freedom suite run against
+~500k generated inputs, pedantic + nursery clippy at zero warnings, and
+every behavioral change verified against the previous implementation over
+163 expressions covering each error path.
+
 ## License
 
 [GLWT (Good Luck With That) Public License](LICENSE). Use at your own risk;
-the author has absolutely no clue what the code in this project does.
+the author has absolutely no clue what the code in this project does — which,
+given the section above, is more literally true than usual.
