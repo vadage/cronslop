@@ -56,7 +56,6 @@ pub use crate::error::CronError;
 ///
 /// Returns the [`CronError`] describing the first problem found, for
 /// anything Kubernetes' own schedule validation would also reject.
-#[must_use = "the computed period is the only result of this call"]
 pub fn try_max_period_seconds(expr: &str) -> Result<u64, CronError> {
     let expr = expr.trim();
     match expr.strip_prefix("@every") {
