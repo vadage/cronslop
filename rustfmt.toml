@@ -1,0 +1,4 @@
+# Matches the style the source is already written in, so `cargo fmt` is a
+# maintenance tool rather than a source of churn.
+max_width = 100
+use_small_heuristics = "Max"

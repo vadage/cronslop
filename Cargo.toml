@@ -1,0 +1,63 @@
+[package]
+name = "cronslop"
+version = "0.1.0"
+edition = "2024"
+description = "Computes the worst-case gap between consecutive runs of a Kubernetes-valid cron schedule"
+readme = "README.md"
+repository = "https://github.com/vadage/cronslop"
+license-file = "LICENSE"
+keywords = ["cron", "schedule", "kubernetes", "cronjob"]
+categories = ["date-and-time", "parser-implementations"]
+# Not published to crates.io.
+publish = false
+
+[dependencies]
+
+[profile.release]
+# Debug builds already trap on integer overflow; make release agree, so a
+# wrap can never silently produce a wrong gap.
+overflow-checks = true
+# Whole-program optimization across the crate's modules. Worth ~10% here,
+# and costs nothing but build time on a crate this size. When cronslop is
+# used as a dependency, the consuming binary's profile governs instead.
+lto = "fat"
+codegen-units = 1
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+variant_size_differences = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+
+# Restriction lints, chosen to keep panics out of library code rather than
+# for style. Every remaining hit must be justified in place.
+arithmetic_side_effects = "warn"
+indexing_slicing = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+panic_in_result_fn = "warn"
+todo = "warn"
+unimplemented = "warn"
+string_slice = "warn"
+as_conversions = "warn"
+cast_lossless = "warn"
+float_cmp_const = "warn"
+str_to_string = "warn"
+# Prefer `#[expect]` over `#[allow]`: an expectation that stops being
+# needed reports itself, so suppressions cannot quietly go stale.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+
+# Conflicts with rustc's `unreachable_pub`: one wants `pub` on items in a
+# private module, the other wants `pub(crate)`. `pub(crate)` is the more
+# honest of the two, so `unreachable_pub` wins.
+redundant_pub_crate = "allow"
+
