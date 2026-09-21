@@ -37,6 +37,12 @@
 //! rejection as a [`CronError`]. [`max_period_seconds`] is the one
 //! exception, and panics by documented contract.
 
+/// The README's Rust examples, compiled and run as doctests so they cannot
+/// drift from the real API. Not compiled outside `cargo test --doc`.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeExamples;
+
 mod duration;
 mod error;
 mod gap;

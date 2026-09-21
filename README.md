@@ -38,16 +38,16 @@ approximation made when day-of-month and day-of-week are both restricted.
 
 ## Layout
 
-| Path               | Contents                                                     |
-|--------------------|--------------------------------------------------------------|
-| `src/lib.rs`       | Public API and crate-level scope docs                        |
-| `src/schedule.rs`  | Cron syntax -> the values each field matches                 |
-| `src/gap.rs`       | Calendar and weekday gap arithmetic                          |
-| `src/value_set.rs` | Allocation-free bitmask set of a field's values              |
-| `src/duration.rs`  | `@every` duration parsing (exact integer math)               |
-| `src/error.rs`     | `CronError`                                                  |
-| `src/main.rs`      | Demo binary                                                  |
-| `tests/`           | Expected periods, `robfig/cron` compatibility, panic-freedom |
+| Path               | Contents                                                                        |
+|--------------------|---------------------------------------------------------------------------------|
+| `src/lib.rs`       | Public API and crate-level scope docs                                           |
+| `src/schedule.rs`  | Cron syntax -> the values each field matches                                    |
+| `src/gap.rs`       | Calendar and weekday gap arithmetic                                             |
+| `src/value_set.rs` | Allocation-free bitmask set of a field's values                                 |
+| `src/duration.rs`  | `@every` duration parsing (exact integer math)                                  |
+| `src/error.rs`     | `CronError`                                                                     |
+| `src/main.rs`      | Demo binary                                                                     |
+| `tests/`           | Expected periods, `robfig/cron` compatibility, panic-freedom, behavior snapshot |
 
 ## Panics
 
@@ -78,6 +78,13 @@ arithmetic, `unwrap`, `expect` and `panic!` are all warnings, and the few
 justified exceptions carry an `#[expect(..., reason = "...")]` explaining
 why. `tests/no_panics.rs` checks the property directly against ~500k
 generated inputs.
+
+Parts of the library fail quietly by design — saturating arithmetic,
+`ValueSet` ignoring out-of-range values, `unwrap_or` fallbacks. None of
+those would warn or panic if a bound were wrong; they would just return a
+different number. `tests/snapshot.rs` is the net under them: it pins the
+exact result of 163 expressions, errors included, so a silent change in
+behavior fails the build.
 
 ## License
 

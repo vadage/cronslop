@@ -1,0 +1,166 @@
+# Recorded behavior of every expression in the corpus.
+# Regenerate with: cargo test --test snapshot -- --ignored regenerate
+# Format: <expression> TAB (OK <seconds> | ERR <CronError as Debug>)
+* * * * *	OK 60
+*/1 * * * *	OK 60
+*/2 * * * *	OK 120
+*/5 * * * *	OK 300
+*/7 * * * *	OK 420
+*/10 * * * *	OK 600
+*/15 * * * *	OK 900
+*/30 * * * *	OK 1800
+0 * * * *	OK 3600
+0 */2 * * *	OK 7200
+0 */5 * * *	OK 18000
+0 */6 * * *	OK 21600
+0 */7 * * *	OK 25200
+0 */12 * * *	OK 43200
+0 0 * * *	OK 86400
+0 12 * * *	OK 86400
+30 8 * * *	OK 86400
+45 23 * * *	OK 86400
+0 0 * * 0	OK 604800
+0 0 * * 6	OK 604800
+0 9 * * 1-5	OK 259200
+0 9 * * 1,3,5	OK 259200
+0 9 * * 2,4	OK 432000
+0 9 * * 0,6	OK 518400
+0 0 1 * *	OK 2678400
+0 0 15 * *	OK 2678400
+0 0 31 * *	OK 5270400
+0 0 30 * *	OK 5184000
+0 0 29 * *	OK 2678400
+0 0 1,15 * *	OK 1468800
+0 0 1-7 * *	OK 2160000
+0 0 1 */3 *	OK 7948800
+0 0 1 */6 *	OK 15897600
+0 0 1 1 *	OK 31622400
+0 0 1 1,7 *	OK 15897600
+0 0 29 2 *	OK 252374400
+0 0 30 2 *	OK 0
+0 0 29 2,3 *	OK 29116800
+0,30 * * * *	OK 1800
+5,20,35,50 * * * *	OK 900
+5/15 * * * *	OK 900
+5/15 * * * 1	OK 519300
+0 8,12,16,20 * * *	OK 43200
+0 9-17 * * 1-5	OK 230400
+*/10 9-17 * * 1-5	OK 227400
+0 */2 * * 1-5	OK 180000
+15 */4 * * *	OK 14400
+30 6-18/3 * * *	OK 43200
+0 9 1-5 * *	OK 2332800
+0 9 1,15 * *	OK 1468800
+0 9 1 * 1	OK 604800
+0 9 13 * 5	OK 604800
+0 9 13 3 5	OK 604800
+*/5 8-17 * * 1-5	OK 223500
+0 0 * * 0-6	OK 86400
+0 0 1-31 * *	OK 86400
+0 0 * 1-12 *	OK 86400
+0 0 1 1-12 *	OK 2678400
+0 0 1-7 1,4,7,10 *	OK 7430400
+0 0 * * ?	OK 86400
+0 0 ? * 1-5	OK 259200
+0 0 1 * ?	OK 2678400
+0 0 ? * 0	OK 604800
+*/15 * * * ?	OK 900
+0 9 ? * 1-5	OK 259200
+0 0 1 ? *	OK 2678400
+@yearly	OK 31622400
+@annually	OK 31622400
+@monthly	OK 2678400
+@weekly	OK 604800
+@daily	OK 86400
+@midnight	OK 86400
+@hourly	OK 3600
+0 9 * * MON-FRI	OK 259200
+0 9 * * mon,wed,fri	OK 259200
+0 0 * * Sun	OK 604800
+0 0 1 JAN *	OK 31622400
+0 0 1 jan,jul *	OK 15897600
+0 0 1 DEC-JAN *	ERR ReversedRange { field: "month", start: 12, end: 1 }
+0 0 1 feb-apr *	OK 26438400
+@every 1h30m	OK 5400
+@every 90s	OK 90
+@every 1h	OK 3600
+@every 500ms	OK 0
+@every 1h30m10s	OK 5410
+@every 0	OK 0
+@every 1.5h	OK 5400
+@every 2m30s	OK 150
+@every 100ns	OK 0
+@every 1us	OK 0
+@every 1µs	OK 0
+@every	ERR InvalidDuration("missing duration after @every")
+@every -1h	ERR InvalidDuration("negative duration not supported: -1h")
+@every 5x	ERR InvalidDuration("unknown unit at 'x' in duration '5x'")
+0 0 * * 7	ERR AboveMax { field: "day-of-week", value: 7, max: 6 }
+0 0 * * 5-3	ERR ReversedRange { field: "day-of-week", start: 5, end: 3 }
+*/0 * * * *	ERR ZeroStep { field: "minute" }
+0 0 * * * *	ERR WrongFieldCount { expected: 5, found: 6 }
+0 0 * *	ERR WrongFieldCount { expected: 5, found: 4 }
+0 0 * * MONDAY	ERR UnknownName { field: "day-of-week", text: "MONDAY" }
+0 0 0 * *	ERR BelowMin { field: "day-of-month", value: 0, min: 1 }
+0 0 32 * *	ERR AboveMax { field: "day-of-month", value: 32, max: 31 }
+0 60 * * *	ERR AboveMax { field: "hour", value: 60, max: 23 }
+60 0 * * *	ERR AboveMax { field: "minute", value: 60, max: 59 }
+a b c d e	ERR UnknownName { field: "minute", text: "a" }
+0 0 1//2 * *	ERR TooManySlashes { field: "day-of-month", text: "1//2" }
+0 0 1-2-3 * *	ERR TooManyHyphens { field: "day-of-month", text: "1-2-3" }
+0 0 */a * *	ERR BadNumber { field: "day-of-month", text: "a" }
+0 0 1 13 *	ERR AboveMax { field: "month", value: 13, max: 12 }
+0-0 0 * * *	OK 86400
+@every 1.5h	OK 5400
+@every 0.5h	OK 1800
+@every .5h	OK 1800
+@every 1.	ERR InvalidDuration("unknown unit at '' in duration '1.'")
+@every 2.25m	OK 135
+@every 0.1s	OK 0
+@every 0.9s	OK 0
+@every 1.999s	OK 1
+@every 1h0.5m	OK 3630
+@every 3.5s	OK 3
+@every 1.5m30s	OK 120
+@every 5	ERR InvalidDuration("unknown unit at '' in duration '5'")
+@every 1h 30m	ERR InvalidDuration("expected a number at ' 30m' in duration '1h 30m'")
+@every  2h	OK 7200
+@every 0s	OK 0
+@every 0h	OK 0
+@every 00000001h	OK 3600
+@every 1e9s	ERR InvalidDuration("unknown unit at 'e9s' in duration '1e9s'")
+@every 1.2.3s	ERR InvalidDuration("bad number '1.2.3' in duration '1.2.3s'")
+@every .	ERR InvalidDuration("bad number '.' in duration '.'")
+@every 1..2s	ERR InvalidDuration("bad number '1..2' in duration '1..2s'")
+@every 10000000000000000000000000000000000000000h	ERR InvalidDuration("bad number '10000000000000000000000000000000000000000' in duration '10000000000000000000000000000000000000000h'")
+@every 99999999999999999999h	ERR InvalidDuration("duration '99999999999999999999h' is too large")
+@every 184467440737095516s	OK 184467440737095516
+@every 18446744073709551616s	ERR InvalidDuration("duration '18446744073709551616s' is too large")
+@every 1ms500us	OK 0
+@every 999ms	OK 0
+@every 1000ms	OK 1
+@every 1h1h1h	OK 10800
+@every 60m	OK 3600
+@every 1440m	OK 86400
+@every 0.000000001s	OK 0
+@every 0.0000000001s	OK 0
+@EVERY 1h	ERR WrongFieldCount { expected: 5, found: 2 }
+@everything 1h	ERR InvalidDuration("expected a number at 'thing 1h' in duration 'thing 1h'")
+@Daily	ERR WrongFieldCount { expected: 5, found: 1 }
+@weekly extra	ERR WrongFieldCount { expected: 5, found: 2 }
+ @hourly	OK 3600
+0 0 * * SUN-SAT	OK 86400
+0 0 1 JAN-DEC *	OK 2678400
+0 0 1 DEC *	OK 31622400
+0-59/7 * * * *	OK 420
+59 23 31 12 *	OK 31622400
+0 0 29 2 1	OK 604800
+0 0 30 2 *	OK 0
+0 0 31 4 *	OK 0
+0 0 31 2,4,6 *	OK 0
+*/61 * * * *	OK 3600
+0 0 29-31 2 *	OK 252374400
+0,0,0 * * * *	OK 3600
+1-1 * * * *	OK 3600
+*/59 * * * *	OK 3540
+0 0 * * 0,0	OK 604800
