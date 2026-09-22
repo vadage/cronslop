@@ -1,4 +1,5 @@
 //! Demo: prints the worst-case gap between runs for a handful of schedules.
+#![forbid(unsafe_code)]
 
 use cronslop::try_max_period_seconds;
 

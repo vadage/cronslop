@@ -123,13 +123,21 @@ impl Schedule {
     ///
     /// Returns the [`CronError`] describing the first problem found.
     pub(crate) fn parse(expr: &str) -> Result<Self, CronError> {
-        let fields: Vec<&str> = expand_descriptor(expr).split_whitespace().collect();
-        let found = fields.len();
-        let Ok([minute, hour, day_of_month, month, day_of_week]) =
-            <[&str; FIELD_COUNT]>::try_from(fields)
-        else {
+        // Filled in place rather than collected: a schedule parses
+        // without touching the heap.
+        let mut parts = expand_descriptor(expr).split_whitespace();
+        let mut fields = [""; FIELD_COUNT];
+        let mut found: usize = 0;
+        for field in &mut fields {
+            let Some(part) = parts.next() else { break };
+            *field = part;
+            found = found.saturating_add(1);
+        }
+        let found = found.saturating_add(parts.count());
+        if found != FIELD_COUNT {
             return Err(CronError::WrongFieldCount { expected: FIELD_COUNT, found });
-        };
+        }
+        let [minute, hour, day_of_month, month, day_of_week] = fields;
 
         Ok(Self {
             minute: Field::parse(minute, &MINUTE)?,
@@ -196,6 +204,13 @@ fn parse_term_into(term: &str, spec: &FieldSpec, values: &mut ValueSet) -> Resul
     }
     if step == 0 {
         return Err(CronError::ZeroStep { field: spec.name });
+    }
+
+    if step == 1 {
+        // The common case — `*`, `1-5`, a bare value — is a contiguous
+        // range, which the value set fills without a loop.
+        *values = values.union(ValueSet::from_range(start, end));
+        return Ok(());
     }
 
     // `checked_add` rather than `for .. .step_by()`: it needs no cast, and

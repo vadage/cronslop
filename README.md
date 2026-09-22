@@ -53,7 +53,7 @@ independent calendar walk (`tools/differential/`).
 | `src/duration.rs`  | `@every` duration parsing (exact integer math)                                  |
 | `src/error.rs`     | `CronError`                                                                     |
 | `src/main.rs`      | Demo binary                                                                     |
-| `tests/`           | Expected periods, `robfig/cron` compatibility, panic-freedom, behavior snapshot |
+| `tests/`           | Expected periods, `robfig/cron` compatibility, panic-freedom, no-allocation, behavior snapshot |
 | `tools/differential/` | Differential testing against `robfig/cron` and a calendar walk |
 
 ## Panics
@@ -85,6 +85,12 @@ arithmetic, `unwrap`, `expect` and `panic!` are all warnings, and the few
 justified exceptions carry an `#[expect(..., reason = "...")]` explaining
 why. `tests/no_panics.rs` checks the property directly against ~500k
 generated inputs.
+
+Computing a period does not allocate: every field's values live in a
+64-bit mask, the calendar strategies stream their firing days through an
+accumulator instead of collecting them, and parsing fills a fixed array.
+`tests/no_allocation.rs` installs a counting allocator and holds the line
+at zero. Only rejection allocates, for the error's message.
 
 Parts of the library fail quietly by design — saturating arithmetic,
 `ValueSet` ignoring out-of-range values, `unwrap_or` fallbacks. None of

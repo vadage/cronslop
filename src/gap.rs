@@ -32,7 +32,8 @@ const SECONDS_PER_MINUTE: u32 = 60;
 const SECONDS_PER_HOUR: u32 = 60 * SECONDS_PER_MINUTE;
 const SECONDS_PER_DAY: u64 = 24 * 3_600;
 const DAYS_IN_WEEK: u64 = 7;
-const DAYS_IN_LEAP_YEAR: u64 = 366;
+const DAYS_IN_LEAP_YEAR: u32 = 366;
+const DAYS_IN_COMMON_YEAR: u32 = 365;
 
 /// The maximum gap, in seconds, between consecutive runs of `schedule`.
 pub(crate) fn max_gap_seconds(schedule: &Schedule) -> u64 {
@@ -70,6 +71,257 @@ const fn includes_leap_day(schedule: &Schedule) -> bool {
 
 const FEBRUARY: u32 = 2;
 const LEAP_DAY: u32 = 29;
+
+/// The widest run of days between consecutive firings, accumulated as
+/// firings are discovered in ascending order.
+///
+/// Nothing is collected: each strategy streams its firing days through
+/// one of these, so no path allocates a day list.
+#[derive(Debug, Clone, Copy, Default)]
+struct DaySpans {
+    first: Option<u64>,
+    last: Option<u64>,
+    widest: u64,
+}
+
+impl DaySpans {
+    /// Records a run of firings that begins at `first`, ends at `last`,
+    /// and waits at most `widest_inside` days somewhere in between. Runs
+    /// must arrive in ascending order and must not overlap.
+    fn record_run(&mut self, first: u64, last: u64, widest_inside: u64) {
+        match self.last {
+            Some(previous) => self.widest = self.widest.max(first.saturating_sub(previous)),
+            None => self.first = Some(first),
+        }
+        self.widest = self.widest.max(widest_inside);
+        self.last = Some(last);
+    }
+
+    /// Records a single firing on day `index`.
+    fn record(&mut self, index: u64) {
+        self.record_run(index, index, 0);
+    }
+
+    /// The widest span once the cycle wraps round, or `None` if nothing
+    /// ever fired.
+    fn widest_span(self, cycle_len_days: u64) -> Option<u64> {
+        let (first, last) = (self.first?, self.last?);
+        let wrap = cycle_len_days.saturating_sub(last).saturating_add(first);
+        Some(self.widest.max(wrap))
+    }
+}
+
+/// Turns accumulated day spans into the schedule's maximum gap.
+fn spans_to_seconds(spans: DaySpans, cycle_len_days: u64, times: FiringTimes) -> u64 {
+    // `gap_across_days` grows with the span, so the widest span gives the
+    // widest gap; the only other candidate is a wait within one day. A
+    // schedule that never fires has no span at all.
+    spans
+        .widest_span(cycle_len_days)
+        .map_or(0, |span| gap_across_days(span, times).max(times.max_gap_within_day))
+}
+
+/// The maximum gap from day-of-month and month restrictions alone,
+/// ignoring day-of-week.
+///
+/// One pass over a leap-year calendar, which never under-reports:
+/// February is the only month whose length varies, and its 29 leap days
+/// are always >= the 28 common-year ones, so any gap spanning February is
+/// at its longest in a leap year.
+///
+/// Schedules that can fire on February the 29th are routed to
+/// [`cycle_gap_seconds`] instead, since no single year holds both a
+/// February with 29 days and one without.
+fn calendar_gap_seconds(schedule: &Schedule, times: FiringTimes) -> u64 {
+    let mut spans = DaySpans::default();
+    record_calendar_days(schedule, &LEAP_YEAR, 0, &mut spans);
+    spans_to_seconds(spans, u64::from(DAYS_IN_LEAP_YEAR), times)
+}
+
+/// The maximum gap from a day-of-week restriction alone, ignoring
+/// day-of-month and month. Exact whenever month is unrestricted: the
+/// spacing between weekdays in a repeating 7-day cycle does not depend on
+/// which real dates they fall on.
+fn weekday_gap_seconds(schedule: &Schedule, times: FiringTimes) -> u64 {
+    let mut spans = DaySpans::default();
+    for weekday in schedule.day_of_week.values.iter() {
+        spans.record(u64::from(weekday));
+    }
+    spans_to_seconds(spans, DAYS_IN_WEEK, times)
+}
+
+/// Streams the day-of-year offsets that day-of-month and month make
+/// active into `spans`, offset by `year_start`. Day-of-week is ignored.
+fn record_calendar_days(schedule: &Schedule, year: &Year, year_start: u64, spans: &mut DaySpans) {
+    let day_of_month = &schedule.day_of_month;
+    for month in year.iter().filter(|month| schedule.month.values.contains(month.number)) {
+        let start = year_start.saturating_add(u64::from(month.first_day_of_year));
+        if day_of_month.is_restricted() {
+            // `up_to` drops the days this month does not have, such as
+            // the 30th in February.
+            for day in day_of_month.values.up_to(month.len).iter() {
+                spans.record(year_start.saturating_add(u64::from(month.day_of_year(day))));
+            }
+        } else {
+            // Every day of the month: one run, rather than 31 records.
+            let last = start.saturating_add(u64::from(month.len)).saturating_sub(1);
+            spans.record_run(start, last, 1);
+        }
+    }
+}
+
+/// The Gregorian calendar repeats exactly every 400 years: 146,097 days,
+/// which is 20,871 whole weeks. One cycle therefore contains every
+/// possible alignment of weekday, day-of-month and month — including the
+/// century years that skip a leap day — so walking it gives the exact
+/// answer for any schedule, with no cycle assumption to be wrong about.
+const CYCLE_DAYS: u64 = 146_097;
+
+/// A year the cycle can start from: divisible by 400, so it is a leap
+/// year, and its 1 January fell on a Saturday. Checked in
+/// [`tests::the_gregorian_cycle_closes`].
+const CYCLE_START_YEAR: i64 = 2000;
+const CYCLE_START_WEEKDAY: u32 = 6;
+const CYCLE_END_YEAR: i64 = CYCLE_START_YEAR + 400;
+
+/// The maximum gap over one full Gregorian cycle. This is the fallback
+/// for every schedule whose firing days do not repeat on a short cycle:
+/// a restricted day-of-week combined with a restricted calendar, or any
+/// schedule that can fire on February the 29th.
+///
+/// The cycle is not walked a day at a time. A year's firing pattern
+/// depends only on its length and the weekday its 1 January falls on, so
+/// there are fourteen possible years in all; those are derived once and
+/// the 400 years then stitched together from them.
+fn cycle_gap_seconds(schedule: &Schedule, times: FiringTimes) -> u64 {
+    let shapes = YearShapes::of(schedule);
+
+    let mut spans = DaySpans::default();
+    let mut year_start: u64 = 0;
+    let mut weekday = CYCLE_START_WEEKDAY;
+    for year in CYCLE_START_YEAR..CYCLE_END_YEAR {
+        let is_leap = is_leap_year(year);
+        let shape = shapes.of_year(is_leap, weekday);
+        if let Some(first) = shape.first {
+            spans.record_run(
+                year_start.saturating_add(first),
+                year_start.saturating_add(shape.last),
+                shape.widest_inside,
+            );
+        }
+        let year_len = if is_leap { DAYS_IN_LEAP_YEAR } else { DAYS_IN_COMMON_YEAR };
+        year_start = year_start.saturating_add(u64::from(year_len));
+        weekday = weekday_after(weekday, year_len);
+    }
+    debug_assert_eq!(year_start, CYCLE_DAYS, "a Gregorian cycle is 146,097 days");
+
+    spans_to_seconds(spans, CYCLE_DAYS, times)
+}
+
+/// Where a year's firings start and end, and the widest wait inside it.
+/// Day numbers are offsets from 1 January of that year.
+#[derive(Debug, Clone, Copy, Default)]
+struct YearShape {
+    first: Option<u64>,
+    last: u64,
+    widest_inside: u64,
+}
+
+/// The fourteen shapes a year of this schedule can take: two year
+/// lengths, each starting on one of seven weekdays.
+struct YearShapes {
+    leap: [YearShape; DAYS_IN_WEEK_USIZE],
+    common: [YearShape; DAYS_IN_WEEK_USIZE],
+}
+
+const DAYS_IN_WEEK_USIZE: usize = 7;
+
+impl YearShapes {
+    fn of(schedule: &Schedule) -> Self {
+        let mut shapes =
+            Self { leap: [YearShape::default(); 7], common: [YearShape::default(); 7] };
+        let mut weekday = 0;
+        for (leap, common) in shapes.leap.iter_mut().zip(shapes.common.iter_mut()) {
+            *leap = year_shape(schedule, &LEAP_YEAR, weekday);
+            *common = year_shape(schedule, &COMMON_YEAR, weekday);
+            weekday = next_weekday(weekday);
+        }
+        shapes
+    }
+
+    /// The shape of a year of this length starting on this weekday.
+    /// `first_weekday` is always 0-6, so the lookup always finds one.
+    fn of_year(&self, is_leap: bool, first_weekday: u32) -> YearShape {
+        let row = if is_leap { &self.leap } else { &self.common };
+        let shape = usize::try_from(first_weekday).ok().and_then(|index| row.get(index)).copied();
+        debug_assert!(shape.is_some(), "weekday {first_weekday} is out of range");
+        shape.unwrap_or_default()
+    }
+}
+
+/// Derives one year's shape, a month at a time.
+fn year_shape(schedule: &Schedule, year: &Year, first_weekday: u32) -> YearShape {
+    let mut spans = DaySpans::default();
+    let mut weekday = first_weekday;
+    for month in year {
+        if schedule.month.values.contains(month.number) {
+            for day in firing_days_of(schedule, month, weekday).iter() {
+                spans.record(u64::from(month.day_of_year(day)));
+            }
+        }
+        weekday = weekday_after(weekday, month.len);
+    }
+    YearShape {
+        first: spans.first,
+        last: spans.last.unwrap_or_default(),
+        widest_inside: spans.widest,
+    }
+}
+
+/// The days of `month` this schedule fires on, given the weekday its
+/// first day falls on.
+///
+/// Whole months are resolved with bit masks rather than a day-by-day
+/// test, under cron's rule that a restricted day-of-month and
+/// day-of-week are OR'd together.
+fn firing_days_of(schedule: &Schedule, month: &Month, first_weekday: u32) -> ValueSet {
+    let (day_of_month, day_of_week) = (&schedule.day_of_month, &schedule.day_of_week);
+    let by_date = day_of_month.values.up_to(month.len);
+    match (day_of_month.is_restricted(), day_of_week.is_restricted()) {
+        (true, true) => by_date.union(weekday_days(day_of_week.values, month.len, first_weekday)),
+        (true, false) => by_date,
+        (false, true) => weekday_days(day_of_week.values, month.len, first_weekday),
+        (false, false) => ValueSet::ALL.up_to(month.len).at_least(1),
+    }
+}
+
+/// The days of a month falling on any of `weekdays`, given the weekday
+/// its first day falls on.
+fn weekday_days(weekdays: ValueSet, month_len: u32, first_weekday: u32) -> ValueSet {
+    let mut days = ValueSet::EMPTY;
+    for weekday in weekdays.iter() {
+        // The first day of the month with this weekday, 1-based.
+        let offset = weekday.saturating_add(DAYS_IN_WEEK_U32).saturating_sub(first_weekday) % 7;
+        days = days.union(ValueSet::every_seventh_from(offset.saturating_add(1)));
+    }
+    days.up_to(month_len)
+}
+
+const DAYS_IN_WEEK_U32: u32 = 7;
+
+/// The day after `weekday`, wrapping Saturday back to Sunday.
+const fn next_weekday(weekday: u32) -> u32 {
+    if weekday >= 6 { 0 } else { weekday.saturating_add(1) }
+}
+
+/// The weekday `days` days after `weekday`.
+const fn weekday_after(weekday: u32, days: u32) -> u32 {
+    weekday.saturating_add(days % 7) % 7
+}
+
+const fn is_leap_year(year: i64) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
 
 /// What the gap arithmetic needs to know about the times of day a
 /// schedule fires at.
@@ -163,169 +415,6 @@ fn gap_across_days(day_span: u64, times: FiringTimes) -> u64 {
     day_span.saturating_mul(SECONDS_PER_DAY).saturating_sub(u64::from(times.span()))
 }
 
-/// The largest gap in seconds given the active day offsets within one
-/// repeating cycle (e.g. day-of-year 0..365, or day-of-week 0..6), the
-/// cycle's length in days, and the times of day that fire on each active
-/// day. Includes the wrap from the last active day of one cycle to the
-/// first of the next.
-fn max_gap_from_days(days: &[u64], cycle_len_days: u64, times: FiringTimes) -> u64 {
-    let (Some(&first_day), Some(&last_day)) = (days.first(), days.last()) else {
-        return 0; // schedule never fires
-    };
-
-    let wrap_span = cycle_len_days.saturating_sub(last_day).saturating_add(first_day);
-    pairs(days)
-        .map(|(day, next)| next.saturating_sub(day))
-        .chain(std::iter::once(wrap_span))
-        .map(|day_span| gap_across_days(day_span, times))
-        .chain(std::iter::once(times.max_gap_within_day))
-        .max()
-        .unwrap_or(0)
-}
-
-/// Each consecutive pair of `values`, by value: `[a, b, c]` -> `(a, b)`,
-/// `(b, c)`. Empty for slices shorter than two.
-fn pairs<T: Copy>(values: &[T]) -> impl Iterator<Item = (T, T)> + '_ {
-    values.iter().zip(values.iter().skip(1)).map(|(&value, &next)| (value, next))
-}
-
-/// The maximum gap from day-of-month and month restrictions alone,
-/// ignoring day-of-week.
-///
-/// The ordinary case is resolved with a single pass over a leap-year
-/// calendar, which never under-reports: February is the only month whose
-/// length varies, and its 29 leap days are always >= the 28 common-year
-/// ones, so any gap spanning February can only be equal or longer under
-/// the leap model.
-///
-/// Schedules that can fire on February the 29th are routed to
-/// [`cycle_gap_seconds`] instead, since no single year holds both a
-/// February with 29 days and one without.
-fn calendar_gap_seconds(schedule: &Schedule, times: FiringTimes) -> u64 {
-    let days = active_days_of_year(schedule, &LEAP_YEAR);
-    max_gap_from_days(&days, DAYS_IN_LEAP_YEAR, times)
-}
-
-/// The maximum gap from a day-of-week restriction alone, ignoring
-/// day-of-month and month. Exact whenever month is unrestricted: the
-/// spacing between weekdays in a repeating 7-day cycle does not depend on
-/// which real dates they fall on.
-fn weekday_gap_seconds(schedule: &Schedule, times: FiringTimes) -> u64 {
-    let days: Vec<u64> = schedule.day_of_week.values.iter().map(u64::from).collect();
-    max_gap_from_days(&days, DAYS_IN_WEEK, times)
-}
-
-/// The 0-based day-of-year offsets that day-of-month and month make
-/// active, ascending. Day-of-week is ignored.
-fn active_days_of_year(schedule: &Schedule, year: &Year) -> Vec<u64> {
-    let day_of_month = &schedule.day_of_month;
-    // At most one entry per allowed day in each month.
-    let mut days = Vec::with_capacity(year.len().saturating_mul(day_of_month.values.count()));
-    for month in months_of(schedule, year) {
-        if day_of_month.is_restricted() {
-            // `up_to` drops the days this month does not have, such as
-            // the 30th in February.
-            let matching = day_of_month.values.up_to(month.len);
-            days.extend(matching.iter().map(|day| u64::from(month.day_of_year(day))));
-        } else {
-            days.extend(month.days_of_year().map(u64::from));
-        }
-    }
-    days
-}
-
-/// The months of `year` that the schedule's month field allows.
-fn months_of<'a>(schedule: &'a Schedule, year: &'a Year) -> impl Iterator<Item = &'a Month> {
-    year.iter().filter(|month| schedule.month.values.contains(month.number))
-}
-
-/// The Gregorian calendar repeats exactly every 400 years: 146,097 days,
-/// which is 20,871 whole weeks. One cycle therefore contains every
-/// possible alignment of weekday, day-of-month and month — including the
-/// century years that skip a leap day — so walking it gives the exact
-/// answer for any schedule, with no cycle assumption to be wrong about.
-const CYCLE_DAYS: u64 = 146_097;
-
-/// A year the cycle can start from: divisible by 400, so it is a leap
-/// year, and its 1 January fell on a Saturday. Checked in
-/// [`tests::the_gregorian_cycle_closes`].
-const CYCLE_START_YEAR: i64 = 2000;
-const CYCLE_START_WEEKDAY: u32 = 6;
-
-/// The maximum gap, found by walking one full Gregorian cycle a day at a
-/// time. This is the fallback for every schedule whose firing days do not
-/// repeat on a short cycle: a restricted day-of-week combined with a
-/// restricted calendar, or any schedule that fires on February the 29th.
-fn cycle_gap_seconds(schedule: &Schedule, times: FiringTimes) -> u64 {
-    let mut first_firing = None;
-    let mut last_firing: Option<u64> = None;
-    let mut widest = 0;
-
-    let mut day_index: u64 = 0;
-    let mut weekday = CYCLE_START_WEEKDAY;
-    for year in CYCLE_START_YEAR..CYCLE_END_YEAR {
-        let months = if is_leap_year(year) { &LEAP_YEAR } else { &COMMON_YEAR };
-        for month in months {
-            if !schedule.month.values.contains(month.number) {
-                // Nothing here can fire, so step over the month whole.
-                day_index = day_index.saturating_add(u64::from(month.len));
-                weekday = weekday_after(weekday, month.len);
-                continue;
-            }
-            for day in 1..=month.len {
-                if fires_on(schedule, day, weekday) {
-                    match last_firing {
-                        Some(previous) => widest = widest.max(day_index.saturating_sub(previous)),
-                        None => first_firing = Some(day_index),
-                    }
-                    last_firing = Some(day_index);
-                }
-                day_index = day_index.saturating_add(1);
-                weekday = next_weekday(weekday);
-            }
-        }
-    }
-    debug_assert_eq!(day_index, CYCLE_DAYS, "a Gregorian cycle is 146,097 days");
-
-    let (Some(first), Some(last)) = (first_firing, last_firing) else {
-        return 0; // schedule never fires
-    };
-    // The wrap from the cycle's last firing into the next cycle's first.
-    let wrap = CYCLE_DAYS.saturating_sub(last).saturating_add(first);
-    // `gap_across_days` grows with the span, so the widest span gives the
-    // widest gap; the only other candidate is a wait within one day.
-    gap_across_days(widest.max(wrap), times).max(times.max_gap_within_day)
-}
-
-const CYCLE_END_YEAR: i64 = CYCLE_START_YEAR + 400;
-
-/// Whether the schedule fires on this day of an already-allowed month,
-/// under cron's rule that a restricted day-of-month and day-of-week are
-/// OR'd together.
-const fn fires_on(schedule: &Schedule, day: u32, weekday: u32) -> bool {
-    let (day_of_month, day_of_week) = (&schedule.day_of_month, &schedule.day_of_week);
-    match (day_of_month.is_restricted(), day_of_week.is_restricted()) {
-        (true, true) => day_of_month.values.contains(day) || day_of_week.values.contains(weekday),
-        (true, false) => day_of_month.values.contains(day),
-        (false, true) => day_of_week.values.contains(weekday),
-        (false, false) => true,
-    }
-}
-
-/// The day after `weekday`, wrapping Saturday back to Sunday.
-const fn next_weekday(weekday: u32) -> u32 {
-    if weekday >= 6 { 0 } else { weekday.saturating_add(1) }
-}
-
-/// The weekday `days` days after `weekday`.
-const fn weekday_after(weekday: u32, days: u32) -> u32 {
-    weekday.saturating_add(days) % 7
-}
-
-const fn is_leap_year(year: i64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
-}
-
 /// One month of a year of fixed length.
 #[derive(Debug, Clone, Copy)]
 struct Month {
@@ -343,11 +432,6 @@ impl Month {
     /// saturation is unreachable.
     const fn day_of_year(&self, day: u32) -> u32 {
         self.first_day_of_year.saturating_add(day).saturating_sub(1)
-    }
-
-    /// The 0-based day-of-year offsets of every day in this month.
-    fn days_of_year(&self) -> impl Iterator<Item = u32> {
-        (1..=self.len).zip(self.first_day_of_year..).map(|(_, day_of_year)| day_of_year)
     }
 }
 
@@ -406,7 +490,7 @@ mod tests {
 
     #[test]
     fn calendar_tables_are_consistent() {
-        assert_offsets_are_cumulative(&LEAP_YEAR, u32::try_from(DAYS_IN_LEAP_YEAR).unwrap());
+        assert_offsets_are_cumulative(&LEAP_YEAR, DAYS_IN_LEAP_YEAR);
         assert_offsets_are_cumulative(&COMMON_YEAR, 365);
         assert_eq!(LEAP_YEAR[1].len, 29, "February, leap year");
         assert_eq!(COMMON_YEAR[1].len, 28, "February, common year");

@@ -30,10 +30,39 @@ impl ValueSet {
         self.0 & bit(value) != 0
     }
 
-    /// How many values the set holds, as a `usize` for sizing buffers.
-    /// Never fails in practice: the count is at most [`Self::CAPACITY`].
-    pub(crate) fn count(self) -> usize {
-        usize::try_from(self.0.count_ones()).unwrap_or(0)
+    /// Every value, i.e. `0..CAPACITY`.
+    pub(crate) const ALL: Self = Self(u64::MAX);
+
+    /// The union of two sets.
+    pub(crate) const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    /// The values at least `floor`.
+    pub(crate) const fn at_least(self, floor: u32) -> Self {
+        match u64::MAX.checked_shl(floor) {
+            Some(keep) => Self(self.0 & keep),
+            None => Self::EMPTY,
+        }
+    }
+
+    /// Every value from `first` to `last`, inclusive.
+    ///
+    /// A whole range in two bit operations, rather than one insert per
+    /// value — and cron fields are mostly ranges.
+    pub(crate) const fn from_range(first: u32, last: u32) -> Self {
+        Self::ALL.up_to(last).at_least(first)
+    }
+
+    /// `first`, then every seventh value after it.
+    ///
+    /// A weekday recurs every seven days, so one of these covers a whole
+    /// month's worth of, say, Mondays without walking the month.
+    pub(crate) const fn every_seventh_from(first: u32) -> Self {
+        match EVERY_SEVENTH.checked_shl(first) {
+            Some(bits) => Self(bits),
+            None => Self::EMPTY,
+        }
     }
 
     /// The values at most `limit`, e.g. the days of the month that a
@@ -63,6 +92,10 @@ impl ValueSet {
     }
 }
 
+/// Bits 0, 7, 14, ... — one per week, so that shifting it into place
+/// marks every day of a month sharing one weekday.
+const EVERY_SEVENTH: u64 = 0x8102_0408_1020_4081;
+
 /// The bit standing for `value`, or no bit at all if `value` is out of
 /// range.
 const fn bit(value: u32) -> u64 {
@@ -88,7 +121,6 @@ mod tests {
     fn holds_the_values_inserted() {
         let set = set_of(&[0, 1, 29, 59]);
         assert_eq!(set.iter().collect::<Vec<_>>(), vec![0, 1, 29, 59]);
-        assert_eq!(set.count(), 4);
         assert!(set.contains(0) && set.contains(59));
         assert!(!set.contains(2) && !set.contains(58));
         assert_eq!(ValueSet::EMPTY.iter().count(), 0);
@@ -102,6 +134,35 @@ mod tests {
         assert_eq!(set.iter().count(), 0, "out-of-range values must not wrap onto real ones");
         assert!(!set.contains(ValueSet::CAPACITY));
         assert!(!set.contains(u32::MAX));
+    }
+
+    #[test]
+    fn every_seventh_marks_one_weekday_of_a_month() {
+        // Mondays of a 31-day month whose 2nd is a Monday.
+        let mondays = ValueSet::every_seventh_from(2).up_to(31);
+        assert_eq!(mondays.iter().collect::<Vec<_>>(), vec![2, 9, 16, 23, 30]);
+        // The stride must reach the top of the range and stop there.
+        assert_eq!(ValueSet::every_seventh_from(1).up_to(31).iter().count(), 5);
+        assert_eq!(ValueSet::every_seventh_from(0).up_to(63).iter().count(), 10);
+        assert_eq!(ValueSet::every_seventh_from(ValueSet::CAPACITY).iter().count(), 0);
+    }
+
+    #[test]
+    fn from_range_covers_the_whole_range() {
+        assert_eq!(ValueSet::from_range(0, 59).iter().count(), 60);
+        assert_eq!(ValueSet::from_range(5, 5), set_of(&[5]));
+        assert_eq!(ValueSet::from_range(1, 3), set_of(&[1, 2, 3]));
+        assert_eq!(ValueSet::from_range(3, 1).iter().count(), 0, "a reversed range is empty");
+        assert_eq!(ValueSet::from_range(0, 63).iter().count(), 64);
+    }
+
+    #[test]
+    fn union_and_at_least_combine_sets() {
+        assert_eq!(set_of(&[1, 9]).union(set_of(&[9, 20])), set_of(&[1, 9, 20]));
+        assert_eq!(set_of(&[1, 9, 20]).at_least(9), set_of(&[9, 20]));
+        assert_eq!(set_of(&[1, 9]).at_least(0), set_of(&[1, 9]));
+        assert_eq!(set_of(&[1, 9]).at_least(ValueSet::CAPACITY).iter().count(), 0);
+        assert_eq!(ValueSet::ALL.up_to(3).at_least(1), set_of(&[1, 2, 3]));
     }
 
     #[test]

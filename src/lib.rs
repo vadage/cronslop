@@ -37,6 +37,11 @@
 //! rejection as a [`CronError`]. [`max_period_seconds`] is the one
 //! exception, and panics by documented contract.
 
+// The library contains no unsafe code, and cannot grow any. The package
+// lint is `deny` rather than `forbid` only so that the allocation test
+// can install a counting allocator.
+#![forbid(unsafe_code)]
+
 /// The README's Rust examples, compiled and run as doctests so they cannot
 /// drift from the real API. Not compiled outside `cargo test --doc`.
 #[cfg(doctest)]
