@@ -30,11 +30,6 @@ impl ValueSet {
         self.0 & bit(value) != 0
     }
 
-    /// Whether the set holds nothing.
-    pub(crate) const fn is_empty(self) -> bool {
-        self.0 == 0
-    }
-
     /// How many values the set holds, as a `usize` for sizing buffers.
     /// Never fails in practice: the count is at most [`Self::CAPACITY`].
     pub(crate) fn count(self) -> usize {
@@ -96,8 +91,6 @@ mod tests {
         assert_eq!(set.count(), 4);
         assert!(set.contains(0) && set.contains(59));
         assert!(!set.contains(2) && !set.contains(58));
-        assert!(!set.is_empty());
-        assert!(ValueSet::EMPTY.is_empty());
         assert_eq!(ValueSet::EMPTY.iter().count(), 0);
     }
 
@@ -106,7 +99,7 @@ mod tests {
         let mut set = ValueSet::EMPTY;
         set.insert(ValueSet::CAPACITY);
         set.insert(u32::MAX);
-        assert!(set.is_empty(), "out-of-range values must not wrap onto real ones");
+        assert_eq!(set.iter().count(), 0, "out-of-range values must not wrap onto real ones");
         assert!(!set.contains(ValueSet::CAPACITY));
         assert!(!set.contains(u32::MAX));
     }

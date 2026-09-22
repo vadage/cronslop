@@ -16,7 +16,7 @@
 //! `robfig/cron`'s `ParseStandard` — the parser Kubernetes' `CronJob`
 //! controller validates schedules with. The `schedule` module documents
 //! the syntax in detail, and the `gap` module documents how the gap is
-//! derived, including the one approximation made.
+//! derived. Every answer is exact; there is no approximation.
 //!
 //! ## Deliberately out of scope: timezones and DST
 //!

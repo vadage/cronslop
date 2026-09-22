@@ -112,8 +112,32 @@ fn leap_day_only_schedule_waits_for_a_real_leap_year() {
 
 #[test]
 fn day_of_month_and_day_of_week_are_ored() {
-    // "the 1st, or any Monday" — bounded by the weekly term.
+    // "the 1st, or any Monday" — bounded by the weekly term, because with
+    // the month unrestricted a Monday is never more than 7 days away.
     assert_eq!(max_period_seconds("0 9 1 * 1"), 7 * DAY);
+}
+
+#[test]
+fn a_restricted_month_constrains_the_weekday_term_too() {
+    // Regression: the day-of-week bound used to ignore the month field
+    // entirely, answering "a Friday comes every 7 days" for a schedule
+    // whose Fridays only count in March. Cron applies the month to both
+    // sides of the day-of-month/day-of-week OR, so the real wait is from
+    // the last firing of one March to the first of the next.
+    assert_eq!(max_period_seconds("0 9 13 3 5"), 343 * DAY);
+    assert_eq!(max_period_seconds("0 0 29 2 1"), 350 * DAY);
+    // Feb 30 never arrives, so only the Mondays fire — the calendar term
+    // being empty must not collapse the answer to zero.
+    assert_eq!(max_period_seconds("0 0 30 2 1"), 350 * DAY);
+}
+
+#[test]
+fn february_the_29th_is_missing_three_years_in_four() {
+    // Regression: the single leap-year model invented a 29 February that
+    // most years do not have, so the wait from January to March was
+    // reported as one month instead of two.
+    assert_eq!(max_period_seconds("0 0 29 * *"), 59 * DAY);
+    assert_eq!(max_period_seconds("0 0 29 2,3 *"), 365 * DAY);
 }
 
 #[test]

@@ -31,8 +31,9 @@ must fit in an `i64` of nanoseconds, and anything under a second — zero
 and negatives included — becomes a one-second period.
 
 Schedules are treated as pure UTC calendar arithmetic; timezones and DST
-are deliberately out of scope. See the crate docs for why, and for the one
-approximation made when day-of-month and day-of-week are both restricted.
+are deliberately out of scope — see the crate docs for why. Within that
+scope every answer is exact, verified against `robfig/cron` itself and an
+independent calendar walk (`tools/differential/`).
 
 ## API
 
@@ -53,6 +54,7 @@ approximation made when day-of-month and day-of-week are both restricted.
 | `src/error.rs`     | `CronError`                                                                     |
 | `src/main.rs`      | Demo binary                                                                     |
 | `tests/`           | Expected periods, `robfig/cron` compatibility, panic-freedom, behavior snapshot |
+| `tools/differential/` | Differential testing against `robfig/cron` and a calendar walk |
 
 ## Panics
 
