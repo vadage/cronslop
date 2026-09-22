@@ -15,9 +15,31 @@
 )]
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::Cell;
 
-static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    /// Allocations made by this thread.
+    ///
+    /// Per-thread, not global: the test harness runs tests in parallel,
+    /// and a global counter would charge one test for another's
+    /// allocations — which it did, intermittently, until this was fixed.
+    ///
+    /// `const`-initialised so that reading it cannot itself allocate and
+    /// re-enter the allocator, and `Cell<usize>` has no destructor to
+    /// register.
+    static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Counts one allocation against the current thread. A thread that is
+/// tearing down may no longer have the value, and missing a count there
+/// is harmless.
+fn note_allocation() {
+    let _ = ALLOCATIONS.try_with(|count| count.set(count.get().saturating_add(1)));
+}
+
+fn allocation_count() -> usize {
+    ALLOCATIONS.try_with(Cell::get).unwrap_or(0)
+}
 
 /// Passes everything through to the system allocator, counting requests.
 struct Counting;
@@ -26,7 +48,7 @@ struct Counting;
 // the same contract; the only addition is a relaxed counter increment.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        note_allocation();
         // SAFETY: `layout` is forwarded unchanged from the caller.
         unsafe { System.alloc(layout) }
     }
@@ -38,7 +60,7 @@ unsafe impl GlobalAlloc for Counting {
     }
 
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        note_allocation();
         // SAFETY: arguments are forwarded unchanged from the caller.
         unsafe { System.realloc(pointer, layout, new_size) }
     }
@@ -47,11 +69,11 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static ALLOCATOR: Counting = Counting;
 
-/// Allocations made while running `work`.
+/// Allocations made on this thread while running `work`.
 fn allocations_during(work: impl FnOnce()) -> usize {
-    let before = ALLOCATIONS.load(Ordering::Relaxed);
+    let before = allocation_count();
     work();
-    ALLOCATIONS.load(Ordering::Relaxed).saturating_sub(before)
+    allocation_count().saturating_sub(before)
 }
 
 #[test]
