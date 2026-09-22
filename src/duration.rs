@@ -1,14 +1,34 @@
 //! Parsing the Go-style duration string that `@every` takes.
 //!
-//! Arithmetic is exact integer arithmetic throughout: a duration is a
-//! count of nanoseconds, and a fractional part like the `.5` of `1.5h` is
-//! scaled by the unit and divided down, never routed through a float.
-//! Anything that would not fit is reported as an error rather than
-//! silently wrapping or saturating.
+//! The semantics are `time.ParseDuration` followed by `cron.Every`, which
+//! is the pair `robfig/cron` uses, so the accepted syntax and the
+//! resulting period match what Kubernetes admits:
+//!
+//!   - one optional leading sign, then `<number><unit>` repeated
+//!   - units `ns`, `us`/`µs`, `ms`, `s`, `m`, `h`
+//!   - a bare `0` is the one number allowed without a unit
+//!   - the total must fit in an `i64` count of nanoseconds
+//!   - anything under a second — including zero and any negative
+//!     duration — becomes one second, so no `@every` period is ever zero
+//!
+//! Arithmetic is exact integer arithmetic throughout: a fractional part
+//! like the `.5` of `1.5h` is scaled by the unit and divided down, never
+//! routed through a float. Anything that would not fit is reported as an
+//! error rather than silently wrapping or saturating.
 
 use crate::error::CronError;
 
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
+
+/// `cron.Every` clamps anything shorter than a second up to one second,
+/// so an `@every` schedule never has a period of zero.
+const MINIMUM_SECONDS: u64 = 1;
+
+/// `i64::MAX`, the largest value a Go `time.Duration` holds — it counts
+/// nanoseconds in an `i64`. `time.ParseDuration` errors above this, so
+/// matching the bound keeps the accept/reject boundary identical.
+/// Checked against `i64::MAX` in [`tests::max_nanos_is_i64_max`].
+const MAX_NANOS: u128 = 9_223_372_036_854_775_807;
 
 /// Fraction digits kept. The result is whole seconds, so digits past this
 /// point cannot affect it; keeping the count bounded also keeps the
@@ -28,40 +48,60 @@ const UNITS: [(&str, u128); 7] = [
     ("h", 3_600 * NANOS_PER_SECOND),
 ];
 
-/// Parses a duration such as `1h30m10s`, `90s` or `500ms` into whole
-/// seconds, rounding down. Sub-second durations therefore come back as 0.
+/// Parses the text after `@every ` into the schedule's period in seconds.
+///
+/// Whole seconds, rounding down, with a floor of one second. `text` is
+/// taken exactly as written: leading or trailing spaces are part of it and
+/// make it invalid, as they do in Go.
 ///
 /// # Errors
 ///
-/// Returns [`CronError::InvalidDuration`] if the text is empty, negative,
-/// malformed, or too large to represent.
+/// Returns [`CronError::InvalidDuration`] if the text is empty,
+/// malformed, or too large for an `i64` of nanoseconds.
 pub(crate) fn parse_seconds(text: &str) -> Result<u64, CronError> {
-    let text = text.trim();
     if text.is_empty() {
         return Err(invalid("missing duration after @every"));
     }
-    if text == "0" {
-        return Ok(0);
-    }
-    if text.starts_with('-') {
-        return Err(invalid(format!("negative duration not supported: {text}")));
+
+    // One leading sign, as Go allows. A negative duration parses happily
+    // there and is then clamped up to the one-second minimum, so the sign
+    // cannot change the result — but the rest still has to be valid.
+    let negative = text.starts_with('-');
+    let rest = text.strip_prefix(['-', '+']).unwrap_or(text);
+
+    // Go's one special case: a bare `0` needs no unit.
+    if rest == "0" {
+        return Ok(MINIMUM_SECONDS);
     }
 
-    let mut total_nanos: u128 = 0;
-    let mut rest = text.strip_prefix('+').unwrap_or(text);
+    let nanos = total_nanos(rest, text)?;
+    let seconds =
+        u64::try_from(nanos.checked_div(NANOS_PER_SECOND).ok_or_else(|| too_large(text))?)
+            .map_err(|_| too_large(text))?;
+
+    if negative {
+        return Ok(MINIMUM_SECONDS);
+    }
+    Ok(seconds.max(MINIMUM_SECONDS))
+}
+
+/// Sums the `<number><unit>` terms of an unsigned duration body.
+/// `full` is the whole duration, for error messages only.
+fn total_nanos(body: &str, full: &str) -> Result<u128, CronError> {
+    let mut total: u128 = 0;
+    let mut rest = body;
     while !rest.is_empty() {
-        let (amount, after_amount) = take_number(rest, text)?;
-        let (unit_nanos, after_unit) = take_unit(after_amount, text)?;
+        let (amount, after_amount) = take_number(rest, full)?;
+        let (unit_nanos, after_unit) = take_unit(after_amount, full)?;
 
-        total_nanos = amount
+        total = amount
             .nanos(unit_nanos)
-            .and_then(|nanos| total_nanos.checked_add(nanos))
-            .ok_or_else(|| too_large(text))?;
+            .and_then(|nanos| total.checked_add(nanos))
+            .filter(|nanos| *nanos <= MAX_NANOS)
+            .ok_or_else(|| too_large(full))?;
         rest = after_unit;
     }
-
-    let seconds = total_nanos.checked_div(NANOS_PER_SECOND).ok_or_else(|| too_large(text))?;
-    u64::try_from(seconds).map_err(|_| too_large(text))
+    Ok(total)
 }
 
 /// A non-negative decimal number, kept exactly: `1.5` is whole 1, fraction
@@ -149,4 +189,16 @@ fn invalid(message: impl Into<String>) -> CronError {
 
 fn too_large(full: &str) -> CronError {
     invalid(format!("duration '{full}' is too large"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MAX_NANOS;
+
+    #[test]
+    fn max_nanos_is_i64_max() {
+        // `unsigned_abs` of a positive value is infallible, so this needs
+        // no unwrap to state the equivalence.
+        assert_eq!(MAX_NANOS, u128::from(i64::MAX.unsigned_abs()));
+    }
 }

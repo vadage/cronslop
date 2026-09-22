@@ -123,7 +123,7 @@ impl Schedule {
     ///
     /// Returns the [`CronError`] describing the first problem found.
     pub(crate) fn parse(expr: &str) -> Result<Self, CronError> {
-        let fields: Vec<&str> = expand_descriptor(expr.trim()).split_whitespace().collect();
+        let fields: Vec<&str> = expand_descriptor(expr).split_whitespace().collect();
         let found = fields.len();
         let Ok([minute, hour, day_of_month, month, day_of_week]) =
             <[&str; FIELD_COUNT]>::try_from(fields)

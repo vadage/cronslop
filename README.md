@@ -25,6 +25,11 @@ ranges and steps; the `N/step` form; 3-letter month and weekday names; the
 `@every <duration>`. Day-of-week is bounded at `0-6` strictly — `7` is
 rejected, as Kubernetes rejects it.
 
+`@every` follows Go's `time.ParseDuration` and `cron.Every` exactly: the
+space after `@every` is required, a duration may carry a sign, the total
+must fit in an `i64` of nanoseconds, and anything under a second — zero
+and negatives included — becomes a one-second period.
+
 Schedules are treated as pure UTC calendar arithmetic; timezones and DST
 are deliberately out of scope. See the crate docs for why, and for the one
 approximation made when day-of-month and day-of-week are both restricted.

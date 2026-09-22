@@ -56,19 +56,29 @@ pub use crate::error::CronError;
 ///
 /// Accepts standard 5-field cron, its `@yearly`/`@monthly`/`@weekly`/
 /// `@daily`/`@midnight`/`@hourly` descriptors, and `@every <duration>`,
-/// where the duration itself is the period.
+/// where the duration itself is the period, floored at one second.
+///
+/// The expression is not trimmed: as in `robfig/cron`, padding around a
+/// 5-field expression is fine, but a descriptor must match exactly.
 ///
 /// # Errors
 ///
 /// Returns the [`CronError`] describing the first problem found, for
 /// anything Kubernetes' own schedule validation would also reject.
 pub fn try_max_period_seconds(expr: &str) -> Result<u64, CronError> {
-    let expr = expr.trim();
-    match expr.strip_prefix("@every") {
+    match expr.strip_prefix(EVERY_PREFIX) {
         Some(duration) => duration::parse_seconds(duration),
         None => Ok(gap::max_gap_seconds(&schedule::Schedule::parse(expr)?)),
     }
 }
+
+/// The `@every` descriptor, including the space that must follow it.
+///
+/// `robfig/cron` matches this prefix literally, so `@every1h` is not an
+/// `@every` schedule at all and `@every  1h` has a duration that starts
+/// with a space. Both are rejected, and `expr` is never trimmed, so that
+/// a schedule Kubernetes would refuse is refused here too.
+const EVERY_PREFIX: &str = "@every ";
 
 /// Convenience wrapper over [`try_max_period_seconds`] for callers who know
 /// their input is already valid and would rather panic on a bug than thread

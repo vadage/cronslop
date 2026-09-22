@@ -45,8 +45,45 @@ fn every_duration_is_the_period_itself() {
     assert_eq!(try_max_period_seconds("@every 90s").unwrap(), 90);
     assert_eq!(try_max_period_seconds("@every 1h").unwrap(), 3_600);
     assert_eq!(try_max_period_seconds("@every 1h30m10s").unwrap(), 5_410);
-    // Sub-second durations round down to zero.
-    assert_eq!(try_max_period_seconds("@every 500ms").unwrap(), 0);
+    // Truncated to whole seconds, never rounded up.
+    assert_eq!(try_max_period_seconds("@every 1.999s").unwrap(), 1);
+}
+
+#[test]
+fn every_never_yields_a_period_below_one_second() {
+    // `cron.Every` clamps anything under a second up to one second, so a
+    // sub-second, zero or negative duration is a one-second period — not
+    // zero, and not an error.
+    for expr in ["@every 500ms", "@every 1ns", "@every 0", "@every 0s", "@every -1h"] {
+        assert_eq!(try_max_period_seconds(expr).unwrap(), 1, "{expr}");
+    }
+}
+
+#[test]
+fn every_requires_exactly_one_space_before_the_duration() {
+    // `robfig/cron` matches the literal prefix "@every ", so neither of
+    // these is an `@every` schedule and Kubernetes rejects both.
+    for expr in ["@every1h", "@every  1h", "@everything 1h", "@every"] {
+        assert!(try_max_period_seconds(expr).is_err(), "expected '{expr}' to be rejected");
+    }
+}
+
+#[test]
+fn every_duration_is_bounded_by_go_s_i64_of_nanoseconds() {
+    // `time.Duration` counts nanoseconds in an i64, and `ParseDuration`
+    // errors past that, so the accept/reject boundary sits here.
+    assert_eq!(try_max_period_seconds("@every 9223372036854775807ns").unwrap(), 9_223_372_036);
+    assert!(try_max_period_seconds("@every 9223372036854775808ns").is_err());
+}
+
+#[test]
+fn schedules_are_not_trimmed() {
+    // `strings.Fields` tolerates padding around a 5-field expression, but
+    // a descriptor is matched against the raw string, so a leading space
+    // stops it being one.
+    assert_eq!(try_max_period_seconds(" 0 0 * * * ").unwrap(), 86_400);
+    assert!(try_max_period_seconds(" @hourly").is_err());
+    assert!(try_max_period_seconds("@hourly ").is_err());
 }
 
 /// Asserts that `expr` is rejected, and names the error it must produce.
@@ -119,7 +156,7 @@ fn malformed_terms_are_rejected() {
 
 #[test]
 fn malformed_every_durations_are_rejected() {
-    for expr in ["@every", "@every -1h", "@every 5x", "@every h"] {
+    for expr in ["@every ", "@every 5x", "@every h", "@every 1.2.3s", "@every 1h 30m"] {
         assert!(
             matches!(try_max_period_seconds(expr), Err(CronError::InvalidDuration(_))),
             "expected '{expr}' to be rejected"

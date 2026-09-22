@@ -84,16 +84,16 @@
 @every 1h30m	OK 5400
 @every 90s	OK 90
 @every 1h	OK 3600
-@every 500ms	OK 0
+@every 500ms	OK 1
 @every 1h30m10s	OK 5410
-@every 0	OK 0
+@every 0	OK 1
 @every 1.5h	OK 5400
 @every 2m30s	OK 150
-@every 100ns	OK 0
-@every 1us	OK 0
-@every 1µs	OK 0
-@every	ERR InvalidDuration("missing duration after @every")
-@every -1h	ERR InvalidDuration("negative duration not supported: -1h")
+@every 100ns	OK 1
+@every 1us	OK 1
+@every 1µs	OK 1
+@every	ERR WrongFieldCount { expected: 5, found: 1 }
+@every -1h	OK 1
 @every 5x	ERR InvalidDuration("unknown unit at 'x' in duration '5x'")
 0 0 * * 7	ERR AboveMax { field: "day-of-week", value: 7, max: 6 }
 0 0 * * 5-3	ERR ReversedRange { field: "day-of-week", start: 5, end: 3 }
@@ -116,17 +116,17 @@ a b c d e	ERR UnknownName { field: "minute", text: "a" }
 @every .5h	OK 1800
 @every 1.	ERR InvalidDuration("unknown unit at '' in duration '1.'")
 @every 2.25m	OK 135
-@every 0.1s	OK 0
-@every 0.9s	OK 0
+@every 0.1s	OK 1
+@every 0.9s	OK 1
 @every 1.999s	OK 1
 @every 1h0.5m	OK 3630
 @every 3.5s	OK 3
 @every 1.5m30s	OK 120
 @every 5	ERR InvalidDuration("unknown unit at '' in duration '5'")
 @every 1h 30m	ERR InvalidDuration("expected a number at ' 30m' in duration '1h 30m'")
-@every  2h	OK 7200
-@every 0s	OK 0
-@every 0h	OK 0
+@every  2h	ERR InvalidDuration("expected a number at ' 2h' in duration ' 2h'")
+@every 0s	OK 1
+@every 0h	OK 1
 @every 00000001h	OK 3600
 @every 1e9s	ERR InvalidDuration("unknown unit at 'e9s' in duration '1e9s'")
 @every 1.2.3s	ERR InvalidDuration("bad number '1.2.3' in duration '1.2.3s'")
@@ -134,21 +134,21 @@ a b c d e	ERR UnknownName { field: "minute", text: "a" }
 @every 1..2s	ERR InvalidDuration("bad number '1..2' in duration '1..2s'")
 @every 10000000000000000000000000000000000000000h	ERR InvalidDuration("bad number '10000000000000000000000000000000000000000' in duration '10000000000000000000000000000000000000000h'")
 @every 99999999999999999999h	ERR InvalidDuration("duration '99999999999999999999h' is too large")
-@every 184467440737095516s	OK 184467440737095516
+@every 184467440737095516s	ERR InvalidDuration("duration '184467440737095516s' is too large")
 @every 18446744073709551616s	ERR InvalidDuration("duration '18446744073709551616s' is too large")
-@every 1ms500us	OK 0
-@every 999ms	OK 0
+@every 1ms500us	OK 1
+@every 999ms	OK 1
 @every 1000ms	OK 1
 @every 1h1h1h	OK 10800
 @every 60m	OK 3600
 @every 1440m	OK 86400
-@every 0.000000001s	OK 0
-@every 0.0000000001s	OK 0
+@every 0.000000001s	OK 1
+@every 0.0000000001s	OK 1
 @EVERY 1h	ERR WrongFieldCount { expected: 5, found: 2 }
-@everything 1h	ERR InvalidDuration("expected a number at 'thing 1h' in duration 'thing 1h'")
+@everything 1h	ERR WrongFieldCount { expected: 5, found: 2 }
 @Daily	ERR WrongFieldCount { expected: 5, found: 1 }
 @weekly extra	ERR WrongFieldCount { expected: 5, found: 2 }
- @hourly	OK 3600
+ @hourly	ERR WrongFieldCount { expected: 5, found: 1 }
 0 0 * * SUN-SAT	OK 86400
 0 0 1 JAN-DEC *	OK 2678400
 0 0 1 DEC *	OK 31622400
